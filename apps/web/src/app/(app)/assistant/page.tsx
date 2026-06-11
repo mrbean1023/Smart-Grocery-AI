@@ -210,7 +210,7 @@ export default function AssistantPage() {
                           : "bg-muted",
                       )}
                     >
-                      {m.role === "assistant" ? <MarkdownLite text={m.content} /> : m.content}
+                      {m.role === "assistant" ? <MarkdownLite content={m.content} /> : m.content}
                     </div>
                   </div>
                 ))}

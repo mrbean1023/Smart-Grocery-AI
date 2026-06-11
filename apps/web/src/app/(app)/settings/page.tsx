@@ -94,6 +94,14 @@ function Section({ title, description, children }: { title: string; description?
 }
 
 export default function SettingsPage() {
+  return (
+    <React.Suspense fallback={<Skeleton className="mx-auto h-72 max-w-3xl rounded-xl" />}>
+      <SettingsContent />
+    </React.Suspense>
+  );
+}
+
+function SettingsContent() {
   const qc = useQueryClient();
   const params = useSearchParams();
   const upgrade = useUpgradePrompt();

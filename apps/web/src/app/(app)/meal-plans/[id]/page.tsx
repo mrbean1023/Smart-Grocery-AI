@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { addDays, eachDayOfInterval, format, isSameDay } from "date-fns";
+import { eachDayOfInterval, format, isSameDay } from "date-fns";
 import { CalendarDays, Flame, RefreshCw, Search, Trash2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import type { MealPlanDto, MealPlanSlotDto, MealType, Paginated, RecipeDto } from "@smart-grocery/shared";

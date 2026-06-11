@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api } from "@/lib/api";
+import { api, unwrapItems } from "@/lib/api";
 import { formatDate, formatSGD } from "@/lib/format";
 import { STRATEGY_META } from "@/lib/strategy-meta";
 
@@ -24,7 +24,8 @@ const STATUS_VARIANT: Record<BasketStatus, "secondary" | "success" | "info" | "o
 export default function BasketsPage() {
   const { data: baskets, isLoading } = useQuery({
     queryKey: ["baskets"],
-    queryFn: () => api<BasketDto[]>("/baskets"),
+    queryFn: async () =>
+      unwrapItems(await api<BasketDto[] | { items: BasketDto[] }>("/baskets")),
   });
 
   return (

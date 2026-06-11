@@ -69,7 +69,7 @@ export default function MealPlansPage() {
     queryKey: ["meal-plans"],
     queryFn: () => api<MealPlanDto[] | { items: MealPlanDto[] }>("/meal-plans"),
   });
-  const plans = Array.isArray(rawPlans) ? rawPlans : (rawPlans?.items ?? []);
+  const plans: MealPlanDto[] = Array.isArray(rawPlans) ? rawPlans : (rawPlans?.items ?? []);
 
   const generate = useMutation({
     mutationFn: () =>

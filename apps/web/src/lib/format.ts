@@ -1,4 +1,4 @@
-import { format, formatDistanceToNowStrict, isToday, isYesterday } from "date-fns";
+import { format, isToday, isYesterday } from "date-fns";
 import { formatQuantity, type CanonicalUnit } from "@smart-grocery/shared";
 
 export { formatSGD } from "@smart-grocery/shared";

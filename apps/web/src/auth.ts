@@ -113,10 +113,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return refreshAccessToken(token);
     },
     async session({ session, token }) {
-      session.user = { ...session.user, ...token.user };
-      session.accessToken = token.accessToken;
-      session.error = token.error;
-      return session;
+      // Cast needed: AdapterUser types emailVerified as Date while our API
+      // profile uses a boolean; the JWT strategy never touches an adapter.
+      return {
+        ...session,
+        user: { ...session.user, ...token.user },
+        accessToken: token.accessToken,
+        error: token.error,
+      } as unknown as typeof session;
     },
   },
 });

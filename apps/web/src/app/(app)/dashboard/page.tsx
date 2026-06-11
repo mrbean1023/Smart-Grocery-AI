@@ -38,7 +38,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api } from "@/lib/api";
+import { api, unwrapItems } from "@/lib/api";
 import { formatDate, formatSGD } from "@/lib/format";
 import { STRATEGY_META } from "@/lib/strategy-meta";
 import { useUpgradePrompt } from "@/stores/upgrade-store";
@@ -95,7 +95,8 @@ export default function DashboardPage() {
 
   const baskets = useQuery({
     queryKey: ["baskets"],
-    queryFn: () => api<BasketDto[]>("/baskets"),
+    queryFn: async () =>
+      unwrapItems(await api<BasketDto[] | { items: BasketDto[] }>("/baskets")),
   });
 
   const scanUsage = usage.data?.find((u) => /recipe|scan/i.test(u.kind));

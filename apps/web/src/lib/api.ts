@@ -69,6 +69,12 @@ function buildQuery(query?: Query): string {
   return qs ? `?${qs}` : "";
 }
 
+/** Normalize endpoints that may return either a bare array or a Paginated envelope. */
+export function unwrapItems<T>(data: T[] | { items: T[] } | undefined | null): T[] {
+  if (!data) return [];
+  return Array.isArray(data) ? data : (data.items ?? []);
+}
+
 export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   const { method = "GET", body, formData, query, signal, anonymous } = opts;
 
