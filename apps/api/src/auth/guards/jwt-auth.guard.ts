@@ -22,6 +22,12 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     if (isPublic) {
       return true;
     }
+    // The Prometheus scrape endpoint is served by a third-party controller we
+    // cannot decorate with @Public(); it exposes no user data.
+    const path: string | undefined = context.switchToHttp().getRequest()?.path;
+    if (path === '/metrics') {
+      return true;
+    }
     return super.canActivate(context);
   }
 }

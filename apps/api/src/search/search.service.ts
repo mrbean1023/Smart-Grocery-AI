@@ -1,5 +1,12 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnApplicationBootstrap,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { Client } from '@elastic/elasticsearch';
+import { PrismaService } from '../prisma/prisma.service';
 
 export interface ProductSearchDoc {
   id: string;
@@ -23,11 +30,14 @@ const PRODUCTS_INDEX = 'products';
 const RETRY_INTERVAL_MS = 60_000;
 
 @Injectable()
-export class SearchService implements OnModuleInit, OnModuleDestroy {
+export class SearchService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(SearchService.name);
   private client: Client | null = null;
   private available = false;
   private retryTimer: NodeJS.Timeout | null = null;
+  private syncing = false;
+
+  constructor(private readonly prisma: PrismaService) {}
 
   get isAvailable(): boolean {
     return this.available;
@@ -45,8 +55,76 @@ export class SearchService implements OnModuleInit, OnModuleDestroy {
     await this.ensureIndices();
   }
 
+  onApplicationBootstrap(): void {
+    // Self-heal: reconcile the index with Postgres without blocking startup.
+    void this.syncIndexFromDatabase();
+  }
+
   onModuleDestroy(): void {
     this.clearRetry();
+  }
+
+  /**
+   * Reconcile the products index with Postgres. Bulk-indexes everything when
+   * the index has fewer documents than the database (fresh environments,
+   * post-seed, or after an Elasticsearch wipe). Safe to call repeatedly.
+   */
+  async syncIndexFromDatabase(): Promise<void> {
+    if (!this.available || !this.client || this.syncing) {
+      return;
+    }
+    this.syncing = true;
+    try {
+      const dbCount = await this.prisma.product.count();
+      if (dbCount === 0) {
+        return;
+      }
+      await this.client.indices.refresh({ index: PRODUCTS_INDEX });
+      const esCount = (await this.client.count({ index: PRODUCTS_INDEX })).count;
+      if (esCount >= dbCount) {
+        return;
+      }
+      this.logger.log(`Index out of date (${esCount}/${dbCount} docs) — reindexing products…`);
+
+      const BATCH = 500;
+      let indexed = 0;
+      for (let skip = 0; skip < dbCount; skip += BATCH) {
+        const products = await this.prisma.product.findMany({
+          skip,
+          take: BATCH,
+          orderBy: { createdAt: 'asc' },
+          include: { store: { select: { code: true } } },
+        });
+        if (products.length === 0) {
+          break;
+        }
+        const latest = await this.prisma.$queryRaw<
+          Array<{ product_id: string; price_cents: number; price_per_kg_cents: number | null }>
+        >`SELECT DISTINCT ON ("productId") "productId" AS product_id, "priceCents" AS price_cents, "pricePerKgCents" AS price_per_kg_cents
+          FROM prices WHERE "productId" = ANY(${products.map((p) => p.id)}::uuid[])
+          ORDER BY "productId", "effectiveAt" DESC`;
+        const priceMap = new Map(latest.map((r) => [r.product_id, r]));
+        await this.indexProducts(
+          products.map((p) => ({
+            id: p.id,
+            name: p.name,
+            brand: p.brand,
+            category: p.category,
+            storeCode: p.store.code,
+            isAvailable: p.isAvailable,
+            priceCents: priceMap.get(p.id)?.price_cents ?? null,
+            pricePerKgCents: priceMap.get(p.id)?.price_per_kg_cents ?? null,
+          })),
+        );
+        indexed += products.length;
+      }
+      await this.client.indices.refresh({ index: PRODUCTS_INDEX });
+      this.logger.log(`Reindexed ${indexed} products into Elasticsearch`);
+    } catch (err) {
+      this.logger.warn(`Index sync failed: ${(err as Error).message}`);
+    } finally {
+      this.syncing = false;
+    }
   }
 
   async ensureIndices(): Promise<void> {
@@ -72,9 +150,14 @@ export class SearchService implements OnModuleInit, OnModuleDestroy {
         });
         this.logger.log(`Created Elasticsearch index "${PRODUCTS_INDEX}"`);
       }
+      const cameBack = !this.available;
       this.available = true;
       this.clearRetry();
       this.logger.log('Elasticsearch is available');
+      if (cameBack) {
+        // Re-sync after an outage or first connect (no-op when already current).
+        void this.syncIndexFromDatabase();
+      }
     } catch (err) {
       this.available = false;
       this.logger.warn(
