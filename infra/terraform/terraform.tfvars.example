@@ -1,0 +1,46 @@
+# =============================================================================
+# Smart Grocery AI — example tfvars. Copy to terraform.tfvars and adjust.
+# (terraform.tfvars is gitignored; this example file is committed.)
+# =============================================================================
+
+aws_region  = "ap-southeast-1"
+project     = "smart-grocery"
+environment = "production"
+
+# ---- Networking ----
+vpc_cidr = "10.0.0.0/16"
+
+# ---- EKS ----
+cluster_name            = "smart-grocery"
+cluster_version         = "1.30"
+node_instance_types     = ["t3.large"]
+node_group_min_size     = 2
+node_group_max_size     = 5
+node_group_desired_size = 2
+
+# ---- RDS ----
+db_instance_class        = "db.t4g.medium"
+db_name                  = "smart_grocery"
+db_username              = "grocery"
+db_allocated_storage     = 50
+db_max_allocated_storage = 200
+db_multi_az              = false # set true for production HA
+db_backup_retention_days = 7
+db_deletion_protection   = true
+
+# ---- Redis ----
+redis_node_type = "cache.t4g.micro"
+redis_num_nodes = 1
+
+# ---- S3 / CloudFront ----
+uploads_bucket_name = "smart-grocery-uploads-prod" # must be globally unique
+app_domain          = "app.example.sg"
+api_domain          = "api.example.sg"
+
+# ---- ECR ----
+ecr_keep_last_images = 20
+
+# ---- DNS (optional) ----
+create_dns        = false
+route53_zone_name = "example.sg"
+alb_name          = "" # set after the ALB ingress exists, then re-apply

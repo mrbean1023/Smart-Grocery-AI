@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  WEB_URL: "https://app.example.sg"
+  API_URL: "https://api.example.sg"
+  S3_BUCKET: "smart-grocery-uploads"
+  FREEMIUM_ENFORCED: "true"
+  FREE_TIER_SCANS_PER_MONTH: "5"
+  FREE_TIER_OPTIMIZATIONS_PER_DAY: "1"

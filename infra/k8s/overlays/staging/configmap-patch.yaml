@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  WEB_URL: "https://staging.app.example.sg"
+  API_URL: "https://staging.api.example.sg"
+  S3_BUCKET: "smart-grocery-uploads-staging"
+  # Loosen freemium limits for QA
+  FREEMIUM_ENFORCED: "true"
+  FREE_TIER_SCANS_PER_MONTH: "50"
+  FREE_TIER_OPTIMIZATIONS_PER_DAY: "10"

@@ -1,0 +1,94 @@
+name: Deploy production
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (e.g. a release tag or commit SHA)"
+        required: true
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # OIDC federation to AWS
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    # The "production" environment should be configured in repo Settings →
+    # Environments with required reviewers — that gives this job a manual
+    # approval gate before any step runs.
+    environment: production
+    env:
+      AWS_REGION: ap-southeast-1
+    steps:
+      - name: Check deploy credentials
+        id: guard
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          if [ -n "$AWS_DEPLOY_ROLE_ARN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AWS_DEPLOY_ROLE_ARN secret not set — skipping production deploy."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.enabled == 'true'
+
+      - name: Resolve image tag
+        if: steps.guard.outputs.enabled == 'true'
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="${{ inputs.image_tag }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prefix=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        if: steps.guard.outputs.enabled == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        if: steps.guard.outputs.enabled == 'true'
+        run: aws eks update-kubeconfig --name "${{ vars.EKS_CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}"
+
+      - name: Set image tags
+        if: steps.guard.outputs.enabled == 'true'
+        working-directory: infra/k8s/overlays/production
+        run: |
+          kustomize edit set image \
+            "ghcr.io/OWNER/smart-grocery-api=${{ steps.tag.outputs.prefix }}-api:${{ steps.tag.outputs.tag }}" \
+            "ghcr.io/OWNER/smart-grocery-web=${{ steps.tag.outputs.prefix }}-web:${{ steps.tag.outputs.tag }}"
+
+      - name: Apply manifests
+        if: steps.guard.outputs.enabled == 'true'
+        run: kubectl apply -k infra/k8s/overlays/production
+
+      - name: Wait for rollout
+        if: steps.guard.outputs.enabled == 'true'
+        run: |
+          kubectl rollout status deployment/api -n smart-grocery-prod --timeout=300s
+          kubectl rollout status deployment/web -n smart-grocery-prod --timeout=300s
+
+      - name: Post-deploy smoke test
+        if: steps.guard.outputs.enabled == 'true'
+        run: |
+          kubectl run smoke-$RANDOM \
+            --namespace smart-grocery-prod \
+            --rm -i --restart=Never \
+            --image=curlimages/curl:8.10.1 \
+            -- -fsS --max-time 10 http://api:4000/healthz

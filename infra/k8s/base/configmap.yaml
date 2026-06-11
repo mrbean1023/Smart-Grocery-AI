@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  labels:
+    app.kubernetes.io/part-of: smart-grocery
+data:
+  NODE_ENV: "production"
+  API_PORT: "4000"
+  WEB_URL: "https://app.example.sg"
+  API_URL: "https://api.example.sg"
+  ELASTICSEARCH_NODE: "http://elasticsearch:9200"
+  PROMETHEUS_ENABLED: "true"
+  FREEMIUM_ENFORCED: "true"
+  FREE_TIER_SCANS_PER_MONTH: "5"
+  FREE_TIER_OPTIMIZATIONS_PER_DAY: "1"
+  AWS_REGION: "ap-southeast-1"
+  S3_BUCKET: "smart-grocery-uploads"
+  SMTP_FROM: "Smart Grocery AI <noreply@smartgrocery.sg>"

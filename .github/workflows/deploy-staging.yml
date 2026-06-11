@@ -1,0 +1,94 @@
+name: Deploy staging
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (defaults to the commit SHA of the ref)"
+        required: false
+        default: ""
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # OIDC federation to AWS
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to staging
+    runs-on: ubuntu-latest
+    # Only after a successful CI run on main (or a manual dispatch)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    environment: staging
+    env:
+      AWS_REGION: ap-southeast-1
+    steps:
+      # Guard: skip the whole deploy gracefully when AWS credentials are not
+      # configured for this repo (secrets cannot be used in job-level `if`).
+      - name: Check deploy credentials
+        id: guard
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          if [ -n "$AWS_DEPLOY_ROLE_ARN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AWS_DEPLOY_ROLE_ARN secret not set — skipping staging deploy."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.enabled == 'true'
+
+      - name: Resolve image tag
+        if: steps.guard.outputs.enabled == 'true'
+        id: tag
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            TAG="${{ inputs.image_tag }}"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            TAG="${{ github.event.workflow_run.head_sha }}"
+          else
+            TAG="${{ github.sha }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prefix=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        if: steps.guard.outputs.enabled == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        if: steps.guard.outputs.enabled == 'true'
+        run: aws eks update-kubeconfig --name "${{ vars.EKS_CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}"
+
+      - name: Set image tags
+        if: steps.guard.outputs.enabled == 'true'
+        working-directory: infra/k8s/overlays/staging
+        run: |
+          kustomize edit set image \
+            "ghcr.io/OWNER/smart-grocery-api=${{ steps.tag.outputs.prefix }}-api:${{ steps.tag.outputs.tag }}" \
+            "ghcr.io/OWNER/smart-grocery-web=${{ steps.tag.outputs.prefix }}-web:${{ steps.tag.outputs.tag }}"
+
+      - name: Apply manifests
+        if: steps.guard.outputs.enabled == 'true'
+        run: kubectl apply -k infra/k8s/overlays/staging
+
+      - name: Wait for rollout
+        if: steps.guard.outputs.enabled == 'true'
+        run: |
+          kubectl rollout status deployment/api -n smart-grocery-staging --timeout=300s
+          kubectl rollout status deployment/web -n smart-grocery-staging --timeout=300s

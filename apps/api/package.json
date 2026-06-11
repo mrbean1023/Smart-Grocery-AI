@@ -99,7 +99,8 @@
     "coverageDirectory": "../coverage",
     "testEnvironment": "node",
     "moduleNameMapper": {
-      "^@smart-grocery/shared$": "<rootDir>/../../../packages/shared/src/index.ts"
+      "^@smart-grocery/shared$": "<rootDir>/../../../packages/shared/src/index.ts",
+      "^@/(.*)$": "<rootDir>/$1"
     }
   }
 }

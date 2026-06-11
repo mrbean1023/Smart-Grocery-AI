@@ -1,0 +1,7 @@
+# Keep shell scripts LF so they run inside Linux containers
+*.sh text eol=lf
+# Normalize everything else
+* text=auto
+*.png binary
+*.jpg binary
+*.ico binary
