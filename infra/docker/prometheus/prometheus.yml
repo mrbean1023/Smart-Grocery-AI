@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: smart-grocery-api
+    metrics_path: /metrics
+    static_configs:
+      # host.docker.internal reaches the API running on the host in dev;
+      # in the "app" compose profile the api container resolves directly.
+      - targets: ["host.docker.internal:4000", "api:4000"]

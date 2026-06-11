@@ -1,0 +1,817 @@
+// Smart Grocery AI Singapore — production schema
+// PostgreSQL 16 + pgvector
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector, pg_trgm]
+}
+
+// =====================================================================
+// AUTH & USERS
+// =====================================================================
+
+enum UserRole {
+  USER
+  ADMIN
+  MODERATOR
+}
+
+enum SubscriptionTier {
+  FREE
+  PREMIUM
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  TRIALING
+  INCOMPLETE
+}
+
+model User {
+  id                String    @id @default(uuid()) @db.Uuid
+  email             String    @unique
+  emailVerifiedAt   DateTime?
+  passwordHash      String?
+  name              String
+  avatarUrl         String?
+  role              UserRole  @default(USER)
+  googleId          String?   @unique
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  // Preferences
+  dietaryRestrictions String[] @default([])
+  allergies           String[] @default([])
+  householdSize       Int      @default(1)
+  weeklyBudgetCents   Int?
+  preferredStores     String[] @default([])
+  nutritionGoals      Json?
+
+  subscription      Subscription?
+  refreshTokens     RefreshToken[]
+  verificationTokens VerificationToken[]
+  recipes           Recipe[]
+  pantryItems       PantryItem[]
+  baskets           Basket[]
+  mealPlans         MealPlan[]
+  alerts            Alert[]
+  notifications     Notification[]
+  receiptUploads    ReceiptUpload[]
+  priceSubmissions  PriceSubmission[]
+  chatSessions      ChatSession[]
+  usageRecords      UsageRecord[]
+  priceWatches      PriceWatch[]
+
+  @@index([email])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+enum VerificationTokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+model VerificationToken {
+  id        String                @id @default(uuid()) @db.Uuid
+  userId    String                @db.Uuid
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String                @unique
+  type      VerificationTokenType
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime              @default(now())
+
+  @@index([userId, type])
+  @@map("verification_tokens")
+}
+
+model Subscription {
+  id                   String             @id @default(uuid()) @db.Uuid
+  userId               String             @unique @db.Uuid
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tier                 SubscriptionTier   @default(FREE)
+  status               SubscriptionStatus @default(ACTIVE)
+  stripeCustomerId     String?            @unique
+  stripeSubscriptionId String?            @unique
+  stripePriceId        String?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  @@map("subscriptions")
+}
+
+enum UsageKind {
+  RECIPE_SCAN
+  BASKET_OPTIMIZATION
+  AI_CHAT_MESSAGE
+  OCR_UPLOAD
+}
+
+model UsageRecord {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      UsageKind
+  periodKey String // e.g. "2026-06" for monthly, "2026-06-11" for daily
+  count     Int       @default(0)
+  updatedAt DateTime  @updatedAt
+
+  @@unique([userId, kind, periodKey])
+  @@map("usage_records")
+}
+
+// =====================================================================
+// INGREDIENT INTELLIGENCE
+// =====================================================================
+
+enum IngredientCategory {
+  PRODUCE
+  MEAT
+  SEAFOOD
+  DAIRY
+  EGGS
+  GRAINS
+  BAKERY
+  CANNED
+  FROZEN
+  CONDIMENTS
+  SPICES
+  OILS
+  BEVERAGES
+  SNACKS
+  NOODLES_PASTA
+  TOFU_SOY
+  SAUCES
+  BAKING
+  OTHER
+}
+
+model Ingredient {
+  id           String             @id @default(uuid()) @db.Uuid
+  name         String             @unique // canonical, lowercase
+  displayName  String
+  category     IngredientCategory @default(OTHER)
+  defaultUnit  String             @default("g") // canonical unit: g | ml | piece
+  density      Float? // g/ml for volume<->weight conversion
+  gramsPerPiece Float? // for piece-based items (e.g. 1 egg = 55g)
+  imageUrl     String?
+  embedding    Unsupported("vector(1536)")?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  aliases          IngredientAlias[]
+  nutrition        IngredientNutrition?
+  recipeItems      RecipeIngredient[]
+  pantryItems      PantryItem[]
+  productMatches   ProductIngredientMatch[]
+  substitutionsFrom IngredientSubstitution[] @relation("SubFrom")
+  substitutionsTo   IngredientSubstitution[] @relation("SubTo")
+
+  @@index([category])
+  @@map("ingredients")
+}
+
+model IngredientAlias {
+  id           String     @id @default(uuid()) @db.Uuid
+  ingredientId String     @db.Uuid
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  alias        String     @unique // lowercase
+  locale       String     @default("en-SG")
+
+  @@index([ingredientId])
+  @@map("ingredient_aliases")
+}
+
+model IngredientNutrition {
+  id           String     @id @default(uuid()) @db.Uuid
+  ingredientId String     @unique @db.Uuid
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  // Per 100g
+  calories     Float      @default(0)
+  proteinG     Float      @default(0)
+  carbsG       Float      @default(0)
+  fatG         Float      @default(0)
+  fibreG       Float      @default(0)
+  sodiumMg     Float      @default(0)
+  sugarG       Float      @default(0)
+  source       String     @default("seed")
+
+  @@map("ingredient_nutrition")
+}
+
+model IngredientSubstitution {
+  id               String     @id @default(uuid()) @db.Uuid
+  fromIngredientId String     @db.Uuid
+  fromIngredient   Ingredient @relation("SubFrom", fields: [fromIngredientId], references: [id], onDelete: Cascade)
+  toIngredientId   String     @db.Uuid
+  toIngredient     Ingredient @relation("SubTo", fields: [toIngredientId], references: [id], onDelete: Cascade)
+  ratio            Float      @default(1.0) // multiply qty by this
+  notes            String?
+  confidence       Float      @default(0.8)
+
+  @@unique([fromIngredientId, toIngredientId])
+  @@map("ingredient_substitutions")
+}
+
+// =====================================================================
+// RECIPES
+// =====================================================================
+
+enum RecipeSource {
+  MANUAL
+  IMAGE_OCR
+  PDF_OCR
+  URL_IMPORT
+  AI_GENERATED
+}
+
+enum RecipeStatus {
+  PROCESSING
+  READY
+  FAILED
+}
+
+model Recipe {
+  id           String       @id @default(uuid()) @db.Uuid
+  userId       String?      @db.Uuid
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  title        String
+  description  String?
+  source       RecipeSource @default(MANUAL)
+  status       RecipeStatus @default(READY)
+  sourceUrl    String?
+  imageUrl     String?
+  rawText      String?      // original OCR/imported text
+  servings     Int          @default(2)
+  prepMinutes  Int?
+  cookMinutes  Int?
+  instructions String[]     @default([])
+  tags         String[]     @default([])
+  cuisine      String?
+  isPublic     Boolean      @default(false)
+  failureReason String?
+  embedding    Unsupported("vector(1536)")?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  deletedAt    DateTime?
+
+  ingredients RecipeIngredient[]
+  nutrition   RecipeNutrition?
+  baskets     Basket[]
+  mealSlots   MealPlanSlot[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([isPublic])
+  @@map("recipes")
+}
+
+model RecipeIngredient {
+  id           String      @id @default(uuid()) @db.Uuid
+  recipeId     String      @db.Uuid
+  recipe       Recipe      @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  ingredientId String?     @db.Uuid
+  ingredient   Ingredient? @relation(fields: [ingredientId], references: [id], onDelete: SetNull)
+  rawText      String // "2 cups jasmine rice"
+  quantity     Float?
+  unit         String? // as written
+  normalizedQtyG Float? // canonical grams (or ml for liquids)
+  optional     Boolean     @default(false)
+  matchConfidence Float?
+  sortOrder    Int         @default(0)
+
+  @@index([recipeId])
+  @@index([ingredientId])
+  @@map("recipe_ingredients")
+}
+
+model RecipeNutrition {
+  id        String  @id @default(uuid()) @db.Uuid
+  recipeId  String  @unique @db.Uuid
+  recipe    Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  // Per serving
+  calories  Float   @default(0)
+  proteinG  Float   @default(0)
+  carbsG    Float   @default(0)
+  fatG      Float   @default(0)
+  fibreG    Float   @default(0)
+  sodiumMg  Float   @default(0)
+  sugarG    Float   @default(0)
+  healthScore Float @default(0) // 0-100
+  computedAt DateTime @default(now())
+
+  @@map("recipe_nutrition")
+}
+
+// =====================================================================
+// STORES, PRODUCTS, PRICES
+// =====================================================================
+
+enum StoreCode {
+  FAIRPRICE
+  SHENG_SIONG
+  GIANT
+  COLD_STORAGE
+  PRIME
+  REDMART
+  AMAZON_FRESH
+}
+
+model Store {
+  id              String    @id @default(uuid()) @db.Uuid
+  code            StoreCode @unique
+  name            String
+  logoUrl         String?
+  websiteUrl      String?
+  supportsDelivery Boolean  @default(true)
+  deliveryFeeCents Int      @default(0)
+  freeDeliveryMinCents Int?
+  minOrderCents   Int       @default(0)
+  avgDeliveryDays Float     @default(1)
+  qualityScore    Float     @default(3.5) // 1-5 perceived quality
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  products    Product[]
+  ingestionRuns IngestionRun[]
+
+  @@map("stores")
+}
+
+enum ProductUnit {
+  G
+  KG
+  ML
+  L
+  PIECE
+  PACK
+}
+
+model Product {
+  id            String      @id @default(uuid()) @db.Uuid
+  storeId       String      @db.Uuid
+  store         Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  externalId    String? // store SKU
+  name          String
+  brand         String?
+  description   String?
+  imageUrl      String?
+  category      String?
+  packSize      Float // numeric size
+  packUnit      ProductUnit
+  unitCount     Int         @default(1) // e.g. 2 x 500g
+  isAvailable   Boolean     @default(true)
+  isOrganic     Boolean     @default(false)
+  isHalal       Boolean     @default(false)
+  qualityTier   Int         @default(2) // 1=budget, 2=standard, 3=premium
+  embedding     Unsupported("vector(1536)")?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  prices           Price[]
+  ingredientMatches ProductIngredientMatch[]
+  basketItems      BasketItem[]
+  priceWatches     PriceWatch[]
+
+  @@unique([storeId, externalId])
+  @@index([storeId])
+  @@index([name])
+  @@map("products")
+}
+
+model ProductIngredientMatch {
+  id           String     @id @default(uuid()) @db.Uuid
+  productId    String     @db.Uuid
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  ingredientId String     @db.Uuid
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  similarity   Float // 0-1 embedding cosine similarity
+  isVerified   Boolean    @default(false)
+  matchedBy    String     @default("embedding") // embedding | manual | alias
+
+  @@unique([productId, ingredientId])
+  @@index([ingredientId, similarity])
+  @@map("product_ingredient_matches")
+}
+
+enum PriceSource {
+  SEED
+  API
+  MERCHANT_FEED
+  CSV_IMPORT
+  EXCEL_IMPORT
+  RECEIPT_OCR
+  CROWDSOURCED
+}
+
+model Price {
+  id              String      @id @default(uuid()) @db.Uuid
+  productId       String      @db.Uuid
+  product         Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  priceCents      Int
+  wasPriceCents   Int? // pre-promo price
+  isPromo         Boolean     @default(false)
+  promoEndsAt     DateTime?
+  source          PriceSource @default(SEED)
+  confidence      Float       @default(1.0)
+  // Normalized (computed on write)
+  pricePerKgCents Int?
+  pricePerLCents  Int?
+  pricePerPieceCents Int?
+  effectiveAt     DateTime    @default(now())
+  createdAt       DateTime    @default(now())
+
+  @@index([productId, effectiveAt(sort: Desc)])
+  @@index([isPromo])
+  @@map("prices")
+}
+
+model PriceForecast {
+  id           String   @id @default(uuid()) @db.Uuid
+  productId    String   @db.Uuid
+  horizonDays  Int // 7, 14, 30
+  predictedPriceCents Int
+  direction    String // UP | DOWN | STABLE
+  promoLikelihood Float @default(0)
+  confidence   Float    @default(0.5)
+  modelVersion String   @default("v1")
+  createdAt    DateTime @default(now())
+
+  @@unique([productId, horizonDays])
+  @@index([productId])
+  @@map("price_forecasts")
+}
+
+// =====================================================================
+// PRICE INGESTION
+// =====================================================================
+
+enum IngestionType {
+  API
+  MERCHANT_FEED
+  CSV
+  EXCEL
+  RECEIPT
+  SEED
+}
+
+enum IngestionStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  PARTIAL
+}
+
+model IngestionRun {
+  id          String          @id @default(uuid()) @db.Uuid
+  storeId     String?         @db.Uuid
+  store       Store?          @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  type        IngestionType
+  status      IngestionStatus @default(PENDING)
+  fileKey     String? // S3 key for uploaded files
+  totalRows   Int             @default(0)
+  successRows Int             @default(0)
+  errorRows   Int             @default(0)
+  errors      Json?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime        @default(now())
+
+  @@index([status])
+  @@map("ingestion_runs")
+}
+
+enum ReceiptStatus {
+  UPLOADED
+  PROCESSING
+  COMPLETED
+  FAILED
+  REJECTED
+}
+
+model ReceiptUpload {
+  id          String        @id @default(uuid()) @db.Uuid
+  userId      String        @db.Uuid
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fileKey     String
+  status      ReceiptStatus @default(UPLOADED)
+  storeCode   StoreCode?
+  receiptDate DateTime?
+  totalCents  Int?
+  rawOcrText  String?
+  parsedItems Json? // [{name, qty, priceCents}]
+  failureReason String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  priceSubmissions PriceSubmission[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("receipt_uploads")
+}
+
+enum SubmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  AUTO_APPROVED
+}
+
+model PriceSubmission {
+  id          String           @id @default(uuid()) @db.Uuid
+  userId      String           @db.Uuid
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  receiptId   String?          @db.Uuid
+  receipt     ReceiptUpload?   @relation(fields: [receiptId], references: [id], onDelete: SetNull)
+  storeCode   StoreCode
+  productName String
+  priceCents  Int
+  packSize    Float?
+  packUnit    String?
+  status      SubmissionStatus @default(PENDING)
+  reviewNote  String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([status])
+  @@index([userId])
+  @@map("price_submissions")
+}
+
+// =====================================================================
+// BASKETS
+// =====================================================================
+
+enum BasketStrategy {
+  CHEAPEST
+  CONVENIENCE
+  DELIVERY
+  QUALITY
+}
+
+enum BasketStatus {
+  DRAFT
+  OPTIMIZED
+  PURCHASED
+  ARCHIVED
+}
+
+model Basket {
+  id          String         @id @default(uuid()) @db.Uuid
+  userId      String         @db.Uuid
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recipeId    String?        @db.Uuid
+  recipe      Recipe?        @relation(fields: [recipeId], references: [id], onDelete: SetNull)
+  name        String
+  strategy    BasketStrategy @default(CHEAPEST)
+  status      BasketStatus   @default(DRAFT)
+  totalCents  Int            @default(0)
+  deliveryCents Int          @default(0)
+  storeCount  Int            @default(0)
+  savingsCents Int           @default(0) // vs single-store baseline
+  optimizationMeta Json?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  items BasketItem[]
+
+  @@index([userId])
+  @@map("baskets")
+}
+
+model BasketItem {
+  id           String   @id @default(uuid()) @db.Uuid
+  basketId     String   @db.Uuid
+  basket       Basket   @relation(fields: [basketId], references: [id], onDelete: Cascade)
+  productId    String?  @db.Uuid
+  product      Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  ingredientName String
+  requiredQtyG Float?
+  quantity     Int      @default(1)
+  unitPriceCents Int    @default(0)
+  totalCents   Int      @default(0)
+  isSubstitute Boolean  @default(false)
+  unmatched    Boolean  @default(false)
+  checked      Boolean  @default(false)
+
+  @@index([basketId])
+  @@map("basket_items")
+}
+
+// =====================================================================
+// PANTRY
+// =====================================================================
+
+enum PantryLocation {
+  PANTRY
+  FRIDGE
+  FREEZER
+}
+
+model PantryItem {
+  id           String         @id @default(uuid()) @db.Uuid
+  userId       String         @db.Uuid
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ingredientId String?        @db.Uuid
+  ingredient   Ingredient?    @relation(fields: [ingredientId], references: [id], onDelete: SetNull)
+  name         String
+  quantity     Float          @default(1)
+  unit         String         @default("piece")
+  location     PantryLocation @default(PANTRY)
+  expiresAt    DateTime?
+  purchasedAt  DateTime?
+  pricePaidCents Int?
+  consumedAt   DateTime?
+  wasted       Boolean        @default(false)
+  source       String         @default("manual") // manual | receipt | scan
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  usageLogs PantryUsageLog[]
+
+  @@index([userId])
+  @@index([userId, expiresAt])
+  @@map("pantry_items")
+}
+
+model PantryUsageLog {
+  id           String     @id @default(uuid()) @db.Uuid
+  pantryItemId String     @db.Uuid
+  pantryItem   PantryItem @relation(fields: [pantryItemId], references: [id], onDelete: Cascade)
+  action       String // consumed | wasted | adjusted | restocked
+  quantityDelta Float
+  note         String?
+  createdAt    DateTime   @default(now())
+
+  @@index([pantryItemId])
+  @@map("pantry_usage_logs")
+}
+
+// =====================================================================
+// MEAL PLANNING
+// =====================================================================
+
+enum MealPlanPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum MealType {
+  BREAKFAST
+  LUNCH
+  DINNER
+  SNACK
+}
+
+model MealPlan {
+  id          String         @id @default(uuid()) @db.Uuid
+  userId      String         @db.Uuid
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  period      MealPlanPeriod @default(WEEKLY)
+  startDate   DateTime       @db.Date
+  endDate     DateTime       @db.Date
+  budgetCents Int?
+  targetCalories Int?
+  targetProteinG Int?
+  dietaryRestrictions String[] @default([])
+  estimatedCostCents Int      @default(0)
+  generationMeta Json?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  slots MealPlanSlot[]
+
+  @@index([userId])
+  @@map("meal_plans")
+}
+
+model MealPlanSlot {
+  id         String   @id @default(uuid()) @db.Uuid
+  mealPlanId String   @db.Uuid
+  mealPlan   MealPlan @relation(fields: [mealPlanId], references: [id], onDelete: Cascade)
+  recipeId   String?  @db.Uuid
+  recipe     Recipe?  @relation(fields: [recipeId], references: [id], onDelete: SetNull)
+  date       DateTime @db.Date
+  mealType   MealType
+  servings   Int      @default(1)
+  notes      String?
+
+  @@unique([mealPlanId, date, mealType])
+  @@map("meal_plan_slots")
+}
+
+// =====================================================================
+// ALERTS & NOTIFICATIONS
+// =====================================================================
+
+enum AlertType {
+  PRICE_DROP
+  PROMOTION
+  EXPIRING_INGREDIENT
+  BUDGET_OVERRUN
+}
+
+model Alert {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      AlertType
+  enabled   Boolean   @default(true)
+  threshold Float? // e.g. % drop for PRICE_DROP, days for EXPIRING
+  channel   String    @default("in_app") // in_app | email | both
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([userId, type])
+  @@map("alerts")
+}
+
+model PriceWatch {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String   @db.Uuid
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  targetPriceCents Int?
+  createdAt DateTime @default(now())
+
+  @@unique([userId, productId])
+  @@map("price_watches")
+}
+
+model Notification {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      AlertType
+  title     String
+  body      String
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+// =====================================================================
+// AI ASSISTANT
+// =====================================================================
+
+model ChatSession {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String    @default("New conversation")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  messages ChatMessage[]
+
+  @@index([userId])
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id        String      @id @default(uuid()) @db.Uuid
+  sessionId String      @db.Uuid
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role      String // user | assistant | tool
+  content   String
+  toolCalls Json?
+  createdAt DateTime    @default(now())
+
+  @@index([sessionId])
+  @@map("chat_messages")
+}
