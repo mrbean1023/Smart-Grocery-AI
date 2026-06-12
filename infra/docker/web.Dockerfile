@@ -33,6 +33,9 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json package-lock.json ./
 COPY packages/shared ./packages/shared
 COPY apps/web ./apps/web
+# npm nests workspace-local deps (next-auth/@auth/core) under apps/web —
+# the root node_modules copy above does not include them.
+COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 
 # shared must be built first — web imports @smart-grocery/shared from dist
 RUN npm run build -w packages/shared && npm run build -w apps/web
