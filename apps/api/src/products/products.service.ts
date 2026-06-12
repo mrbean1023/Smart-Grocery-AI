@@ -5,7 +5,7 @@ import type { Paginated, ProductDto } from '@smart-grocery/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { SearchService } from '../search/search.service';
 import { PricesService } from '../prices/prices.service';
-import { productToDto, priceToDto } from './product.mapper';
+import { productToDto } from './product.mapper';
 
 // Shared product mapper, re-exported for use across modules.
 export { productToDto, priceToDto } from './product.mapper';

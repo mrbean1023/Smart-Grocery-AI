@@ -42,7 +42,7 @@ const LINE_ITEM_RE = /^(.{2,60}?)\s+\$?\s?(\d{1,4}[.,]\d{2})\s*$/;
 const QTY_PREFIX_RE = /^(\d{1,2})\s*[xX@]\s+/;
 const TOTAL_LINE_RE = /(?:grand\s+)?total[^\d]*(\d{1,4}[.,]\d{2})/i;
 const DATE_RE =
-  /(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})|(\d{4})-(\d{2})-(\d{2})/;
+  /(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})|(\d{4})-(\d{2})-(\d{2})/;
 
 function toCents(text: string): number {
   return Math.round(parseFloat(text.replace(',', '.')) * 100);

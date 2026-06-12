@@ -11,7 +11,7 @@ export class CsvPriceAdapter implements PriceSourceAdapter {
   private readonly logger = new Logger(CsvPriceAdapter.name);
 
   async parse(buffer: Buffer, storeCode: StoreCode): Promise<RawPriceRow[]> {
-    const text = buffer.toString('utf8').replace(/^﻿/, '');
+    const text = buffer.toString('utf8').replace(/^\uFEFF/, '');
     const parsed = Papa.parse<Record<string, unknown>>(text, {
       header: true,
       skipEmptyLines: 'greedy',
