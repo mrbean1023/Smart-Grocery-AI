@@ -1,0 +1,73 @@
+# Render Blueprint — deploys the API + Redis with one click
+# (Dashboard → New → Blueprint → select this repo)
+# The Next.js web app deploys separately on Vercel (root dir: apps/web).
+
+services:
+  - type: web
+    name: smart-grocery-api
+    runtime: docker
+    dockerfilePath: ./infra/docker/api.Dockerfile
+    dockerContext: .
+    region: singapore
+    plan: free
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_PORT
+        value: "4000"
+      # Paste your Neon connection string in the Render dashboard
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: smart-grocery-redis
+          property: connectionString
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      # Set after the Vercel deploy exists (e.g. https://smart-grocery.vercel.app)
+      - key: WEB_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_PREMIUM_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_PREMIUM_YEARLY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      # Leave unset — product search falls back to Postgres trigram search
+      - key: ELASTICSEARCH_NODE
+        sync: false
+      # Optional: S3-compatible storage (AWS S3 / Cloudflare R2) for photo uploads
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: FREEMIUM_ENFORCED
+        value: "true"
+      - key: PROMETHEUS_ENABLED
+        value: "true"
+
+  - type: keyvalue
+    name: smart-grocery-redis
+    region: singapore
+    plan: free
+    maxmemoryPolicy: noeviction
+    ipAllowList: [] # internal access only
