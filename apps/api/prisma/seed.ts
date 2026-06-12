@@ -13,6 +13,7 @@ import { SEED_STORES } from './seed-data/stores';
 import { SEED_INGREDIENTS } from './seed-data/ingredients';
 import { generateSeedProducts, mulberry32, hashString, type SeedProduct } from './seed-data/products';
 import { SEED_RECIPES } from './seed-data/recipes';
+import { INGREDIENT_IMAGES, RECIPE_IMAGES } from './seed-data/images';
 
 const prisma = new PrismaClient();
 
@@ -134,6 +135,7 @@ async function seedIngredients(): Promise<Map<string, string>> {
         category: ing.category,
         density: ing.density ?? null,
         gramsPerPiece: ing.gramsPerPiece ?? null,
+        imageUrl: INGREDIENT_IMAGES[ing.name] ?? null,
       },
       create: {
         name: ing.name,
@@ -142,6 +144,7 @@ async function seedIngredients(): Promise<Map<string, string>> {
         defaultUnit: ing.defaultUnit,
         density: ing.density ?? null,
         gramsPerPiece: ing.gramsPerPiece ?? null,
+        imageUrl: INGREDIENT_IMAGES[ing.name] ?? null,
       },
     });
     ids.set(ing.name, row.id);
@@ -194,9 +197,10 @@ async function seedProducts(
     const ingredientId = ingredientIds.get(sp.ingredientName);
     if (!storeId || !ingredientId) continue;
 
+    const imageUrl = INGREDIENT_IMAGES[sp.ingredientName] ?? null;
     const product = await prisma.product.upsert({
       where: { storeId_externalId: { storeId, externalId: sp.externalId } },
-      update: { isAvailable: true },
+      update: { isAvailable: true, imageUrl },
       create: {
         storeId,
         externalId: sp.externalId,
@@ -209,6 +213,7 @@ async function seedProducts(
         qualityTier: sp.qualityTier,
         isOrganic: sp.isOrganic,
         isHalal: sp.isHalal,
+        imageUrl,
       },
     });
     created++;
@@ -267,12 +272,19 @@ async function seedRecipes(ingredientIds: Map<string, string>) {
 
   for (const r of SEED_RECIPES) {
     const existing = await prisma.recipe.findFirst({ where: { title: r.title, isPublic: true } });
-    if (existing) continue;
+    if (existing) {
+      const imageUrl = RECIPE_IMAGES[r.title];
+      if (imageUrl && existing.imageUrl !== imageUrl) {
+        await prisma.recipe.update({ where: { id: existing.id }, data: { imageUrl } });
+      }
+      continue;
+    }
 
     const recipe = await prisma.recipe.create({
       data: {
         title: r.title,
         description: r.description,
+        imageUrl: RECIPE_IMAGES[r.title] ?? null,
         source: 'MANUAL',
         status: 'READY',
         servings: r.servings,

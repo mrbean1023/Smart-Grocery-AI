@@ -172,12 +172,29 @@ export default function ProductsPage() {
                     }}
                   >
                     <TableCell className="max-w-[280px]">
-                      <p className="truncate text-sm font-medium">{p.name}</p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {p.brand ?? "No brand"}
-                        {p.isOrganic ? " · Organic" : ""}
-                        {p.isHalal ? " · Halal" : ""}
-                      </p>
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-muted/40">
+                          {p.imageUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={p.imageUrl}
+                              alt=""
+                              loading="lazy"
+                              className="h-full w-full object-contain p-0.5"
+                            />
+                          ) : (
+                            <PackageSearch className="h-4 w-4 text-muted-foreground" aria-hidden />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{p.name}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {p.brand ?? "No brand"}
+                            {p.isOrganic ? " · Organic" : ""}
+                            {p.isHalal ? " · Halal" : ""}
+                          </p>
+                        </div>
+                      </div>
                     </TableCell>
                     <TableCell>
                       {p.store ? <StoreBadge code={p.store.code} /> : null}

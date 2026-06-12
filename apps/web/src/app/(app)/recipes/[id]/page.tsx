@@ -344,6 +344,7 @@ export default function RecipeDetailPage() {
                 sizes="(max-width: 1024px) 100vw, 66vw"
                 className="object-cover"
                 priority
+                unoptimized
               />
             </div>
           )}
